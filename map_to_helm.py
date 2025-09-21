@@ -76,40 +76,78 @@ def convert_map_to_helm_sequence(map_str, ID):
     # print(helm_seq)
     return helm_seq
 
+import datetime
 def main():
-    parser = argparse.ArgumentParser(description='Convert MAP sequence to HELM sequence')
+    parser = argparse.ArgumentParser(description='Convert MAP sequence(s) to HELM sequence(s)')
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-s', '--sequence', type=str, help='Single MAP sequence')
-    parser.add_argument('-i', '--id', type=str, help='Peptide ID (required with -s)', required=False)
-    group.add_argument('-f', '--file', type=str, help='Input file with MAP sequences and IDs')
-    parser.add_argument('-o', '--output', type=str, help='Output file path for HELM sequences (used with -f)')
+    group.add_argument('-s', '--sequence', type=str,
+                       help='Single FASTA-like input: header line starting with ">" followed by MAP sequence line (use "\\n" for newline)')
+    group.add_argument('-f', '--file', type=str,
+                       help='Input file with FASTA-like MAP sequences')
+    parser.add_argument('-id', '--identifier', type=str,
+                       help='ID used in HELM notation (required with -s, ignored with -f)')
+    parser.add_argument('-o', '--output', type=str,
+                       help='Output file path for HELM (used with -f)')
 
     args = parser.parse_args()
 
     if args.sequence:
-        if not args.id:
-            parser.error("--id is required when using --sequence")
-        helm_seq = convert_map_to_helm_sequence(args.sequence, args.id)
-        result = process_HELM_seq(helm_seq, args.id)
-        print(result)
+        if not args.identifier:
+            parser.error("--id/--identifier is required when using --sequence")
+        ID = args.identifier
+
+        # Handle escaped \n in input
+        seq_input = args.sequence.encode().decode('unicode_escape')
+        parts = seq_input.strip().split("\n")
+        if len(parts) < 2 or not parts[0].startswith(">"):
+            print("Error: Input must be FASTA-like with a header starting with '>' and a MAP sequence line.")
+            sys.exit(1)
+        header = parts[0][1:].strip()
+        seq = parts[1].strip()
+
+        helm_seq = convert_map_to_helm_sequence(seq, ID)
+        result = process_HELM_seq(helm_seq, ID)
+        print(f">{header}\n{result}")
+
     elif args.file:
-        # Use provided output path or default to temp/helm_output_<input_filename>
-        output_file = args.output if args.output else os.path.join('temp', f'helm_output_{os.path.basename(args.file)}')
-        # Ensure the output directory exists
+       
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = args.output if args.output else os.path.join(
+            'results', f"helm_output_{timestamp}.txt"
+        )
         os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
+
         with open(args.file, 'r') as f, open(output_file, 'w') as out:
+            header, seq_line = None, None
             for line in f:
                 line = line.strip()
-                if line:
-                    # Expect each line to contain MAP sequence and ID separated by a comma
-                    try:
-                        map_str, peptide_id = line.split(',')
-                        helm_seq = convert_map_to_helm_sequence(map_str.strip(), peptide_id.strip())
-                        result = process_HELM_seq(helm_seq, peptide_id.strip())
-                        out.write(f'{result}\n')
-                    except ValueError:
-                        out.write(f'Error: Invalid format in line "{line}". Expected "MAP_sequence,peptide_id"\n')
+                if not line:
+                    continue
+                if line.startswith(">"):
+                    if header and seq_line:
+                        try:
+                            map_seq, peptide_id = seq_line.split(',')
+                            helm_seq = convert_map_to_helm_sequence(map_seq.strip(), peptide_id.strip())
+                            result = process_HELM_seq(helm_seq, peptide_id.strip())
+                            out.write(f"{header}\t{map_seq.strip()}\t{result}\n")
+                        except ValueError:
+                            out.write(f"Error: Invalid format in line '{seq_line}'. Expected 'MAP_sequence,ID'\n")
+                    header = line[1:].strip()
+                    seq_line = None
+                else:
+                    seq_line = line
+            # Process the last record
+            if header and seq_line:
+                try:
+                    map_seq, peptide_id = seq_line.split(',')
+                    helm_seq = convert_map_to_helm_sequence(map_seq.strip(), peptide_id.strip())
+                    result = process_HELM_seq(helm_seq, peptide_id.strip())
+                    out.write(f"{header}\t{map_seq.strip()}\t{result}\n")
+                except ValueError:
+                    out.write(f"Error: Invalid format in line '{seq_line}'. Expected 'MAP_sequence,ID'\n")
+
         print(f"HELM sequences written to {output_file}")
+
 
 if __name__ == "__main__":
     main()

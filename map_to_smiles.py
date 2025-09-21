@@ -6,7 +6,7 @@ import re
 import copy
 import warnings
 import os
-
+import datetime
 warnings.filterwarnings('ignore')
 
 df_monomers = pd.read_csv('data/MAP_momomers_library_new.csv')
@@ -440,29 +440,66 @@ def get_smi_from_map(map):
 # code under MIT licence Copyright (c) 2021-2024 Charles Xu and others, ends here 
 
 def main():
-    parser = argparse.ArgumentParser(description='Convert MAP sequence to SMILES')
+    parser = argparse.ArgumentParser(description='Convert MAP sequence(s) in FASTA-like format to SMILES')
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-s', '--sequence', type=str, help='Single MAP sequence')
-    group.add_argument('-f', '--file', type=str, help='Input file with MAP sequences')
-    parser.add_argument('-o', '--output', type=str, help='Output file path for SMILES (used with -f)')
+    group.add_argument('-s', '--sequence', type=str,
+                       help='Single FASTA-like input: header line starting with ">" followed by sequence line (use "\\n" for newline)')
+    group.add_argument('-f', '--file', type=str,
+                       help='Input file with FASTA-like MAP sequences')
+    parser.add_argument('-o', '--output', type=str,
+                       help='Output file path for SMILES (used with -f)')
 
     args = parser.parse_args()
 
     if args.sequence:
-        smiles = get_smi_from_map(args.sequence)
-        print(smiles)
+        # Convert literal "\n" into actual newline
+        sequence_str = args.sequence.encode().decode('unicode_escape')
+
+        parts = sequence_str.strip().split("\n")
+        if len(parts) < 2 or not parts[0].startswith(">"):
+            print("Error: Input must be FASTA-like with a header starting with '>' and a sequence line.")
+            sys.exit(1)
+
+        header = parts[0][1:].strip()
+        seq = parts[1].strip()
+        smiles = get_smi_from_map(seq)
+        print(f">{header}\n{smiles}")
+
     elif args.file:
-        # Use provided output path or default to temp/smiles_output_<input_filename>
-        output_file = args.output if args.output else os.path.join('temp', f'smiles_output_{os.path.basename(args.file)}')
-        # Ensure the output directory exists
+    
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if args.output:
+            output_file = args.output
+        else:
+            output_file = os.path.join(
+                'results',
+                f"smiles_output_{timestamp}.txt"
+            )
+
         os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
+
         with open(args.file, 'r') as f, open(output_file, 'w') as out:
+            header, seq = None, None
             for line in f:
-                sequence = line.strip()
-                if sequence:
-                    smiles = get_smi_from_map(sequence)
-                    out.write(f'{smiles}\n')
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(">"):
+                    if header and seq:
+                        smiles = get_smi_from_map(seq)
+                        out.write(f"{header}\t{seq}\t{smiles}\n")
+                    header = line[1:].strip()
+                    seq = None
+                else:
+                    seq = line
+            # Last record
+            if header and seq:
+                smiles = get_smi_from_map(seq)
+                out.write(f"{header}\t{seq}\t{smiles}\n")
+
         print(f"SMILES written to {output_file}")
+
 
 if __name__ == "__main__":
     main()

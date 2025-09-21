@@ -7,11 +7,21 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+from map_to_smiles import get_smi_from_map
 
 # Load the MAP monomer library
 df1 = pd.read_csv('data/MAP_momomers_library_new.csv')
 map_to_helm_dict = df1.set_index('MAP_denotion')['Symbol'].sort_index(ascending=False).to_dict()
 
+def smiles_is_possible(map_sequence: str) -> bool:
+    """
+    Returns True if a valid SMILES string can be generated, False otherwise.
+    """
+    smi = get_smi_from_map(map_sequence)
+    # Your SMILES code returns an error message string when it fails.
+    if not smi or "not possible" in smi.lower() or "cyclization not possible" in smi.lower():
+        return False
+    return True
 
 ##MAP to HELM sequence
 def process_HELM_seq(helm_seq, ID):
@@ -105,9 +115,12 @@ def main():
         header = parts[0][1:].strip()
         seq = parts[1].strip()
 
-        helm_seq = convert_map_to_helm_sequence(seq, ID)
-        result = process_HELM_seq(helm_seq, ID)
-        print(f">{header}\n{result}")
+        if smiles_is_possible(seq):
+            helm_seq = convert_map_to_helm_sequence(seq, ID)
+            result = process_HELM_seq(helm_seq, ID)
+            print(f">{header}\n{result}")
+        else:
+            print(f">{header}\nHELM conversion not possible (no valid SMILES)")
 
     elif args.file:
        
@@ -127,9 +140,12 @@ def main():
                     if header and seq_line:
                         try:
                             map_seq, peptide_id = seq_line.split(',')
-                            helm_seq = convert_map_to_helm_sequence(map_seq.strip(), peptide_id.strip())
-                            result = process_HELM_seq(helm_seq, peptide_id.strip())
-                            out.write(f"{header}\t{map_seq.strip()}\t{result}\n")
+                            if smiles_is_possible(map_seq.strip()):
+                                helm_seq = convert_map_to_helm_sequence(map_seq.strip(), peptide_id.strip())
+                                result = process_HELM_seq(helm_seq, peptide_id.strip())
+                                out.write(f"{header}\t{map_seq.strip()}\t{result}\n")
+                            else:
+                                out.write(f"{header}\t{map_seq.strip()}\tHELM conversion not possible (no valid SMILES)\n")
                         except ValueError:
                             out.write(f"Error: Invalid format in line '{seq_line}'. Expected 'MAP_sequence,ID'\n")
                     header = line[1:].strip()
@@ -140,9 +156,12 @@ def main():
             if header and seq_line:
                 try:
                     map_seq, peptide_id = seq_line.split(',')
-                    helm_seq = convert_map_to_helm_sequence(map_seq.strip(), peptide_id.strip())
-                    result = process_HELM_seq(helm_seq, peptide_id.strip())
-                    out.write(f"{header}\t{map_seq.strip()}\t{result}\n")
+                    if smiles_is_possible(map_seq.strip()):
+                        helm_seq = convert_map_to_helm_sequence(map_seq.strip(), peptide_id.strip())
+                        result = process_HELM_seq(helm_seq, peptide_id.strip())
+                        out.write(f"{header}\t{map_seq.strip()}\t{result}\n")
+                    else:
+                        out.write(f"{header}\t{map_seq.strip()}\tHELM conversion not possible (no valid SMILES)\n")
                 except ValueError:
                     out.write(f"Error: Invalid format in line '{seq_line}'. Expected 'MAP_sequence,ID'\n")
 

@@ -9,6 +9,12 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, rdFingerprintGenerator, rdMolDescriptors
 from padelpy import padeldescriptor
 import shutil
+import warnings
+
+warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=RuntimeWarning) 
+warnings.filterwarnings("ignore", category=UserWarning) 
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Predict permeability from SMILES input.")

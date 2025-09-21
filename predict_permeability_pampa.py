@@ -24,6 +24,9 @@ from utils import get_atomic_features, get_embeddings, get_fingerprints, get_des
 import warnings
 
 warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=RuntimeWarning) 
+warnings.filterwarnings("ignore", category=UserWarning)  
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Predict permeability from SMILES input.")

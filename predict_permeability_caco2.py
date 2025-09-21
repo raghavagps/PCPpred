@@ -11,6 +11,10 @@ from tqdm import tqdm
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdFingerprintGenerator, rdMolDescriptors
 from padelpy import padeldescriptor
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from rdkit.Chem import Descriptors, Descriptors3D
+from rdkit.ML.Descriptors import MoleculeDescriptors
 from sklearn.model_selection import KFold
 # from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, AdaBoostRegressor, ExtraTreesRegressor
@@ -19,19 +23,22 @@ from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.linear_model import LinearRegression
-# from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-# from scipy.stats import pearsonr, spearmanr
 import lightgbm as lgb
 import xgboost as xgb
 import shutil
 
-
-from utils import get_atomic_features, get_embeddings, get_fingerprints, get_descriptors
+from collections import Counter
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning) 
+warnings.filterwarnings("ignore", category=UserWarning)  
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Predict permeability from SMILES input.")
     parser.add_argument("--input", type=str, required=True, help="Path to input file containing SMILES.")
-    parser.add_argument("--output", type=str, help="Output file path for predictions (CSV format).")
+    # parser.add_argument("--model", type=str, required=True, help="Meta model name for prediction.")
+    parser.add_argument("--output", type=str, help="Path to save output CSV file")
+
     return parser.parse_args()
 
 def load_smiles(input_path):
@@ -50,127 +57,89 @@ def create_smiles_csv(smiles_list):
     })
     return df
 
+# Mordred Descriptors
+from mordred import Calculator, descriptors
+calc_mord = Calculator(descriptors, ignore_3D=True)
+
+def calculate_2dmordred_descriptors(smiles):
+        try:
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                return None
+            return calc_mord(mol)
+        except Exception as e:
+            print(f"Error processing SMILES {smiles} for Mordred descriptors: {e}")
+            return None
+
 def main():
     args = parse_args()
     smiles = load_smiles(args.input)
+    # print(smiles)
 
     if not smiles:
         sys.exit("No SMILES found in input file.")
-
+    
     test_df = create_smiles_csv(smiles)
-
 
     try:
         cwd = os.getcwd()
-    
-        smi_path = os.path.join(cwd, 'temp', 'Test_Caco2.smi')
-        mol_dir = os.path.join(cwd, 'temp', 'Test_mol_Caco2')
-        padel_2d_dir = os.path.join(cwd, "temp", "Test_2d_padel_Caco2.csv")
-        padel_3d_dir = os.path.join(cwd, "temp", "Test_3d_padel_Caco2.csv")
-        MODEL_DIR = os.path.join(cwd, 'models', 'Caco2')
-        model_name = "MoLFormer-XL-both-10pct_model_1_caco2'"
-        model_save_path = os.path.join(MODEL_DIR, model_name)
 
-
-        # smi_path = 'temp/Test_Caco2.smi'
-        # mol_dir = 'temp/Test_mol_Caco2'
-        # padel_2d_dir = "temp/Test_2d_padel_Caco2.csv"
-        # padel_3d_dir = "temp/Test_3d_padel_Caco2.csv"
-
-        
-        test_df_atomic = get_atomic_features(test_df)
-        test_df_emb = get_embeddings(test_df,model_save_path)
-        test_df_fp = get_fingerprints(test_df,smi_path)
-        test_df_desc = get_descriptors(test_df,smi_path,mol_dir,padel_2d_dir, padel_3d_dir )
-        # data_type = 'descriptors'
-        # df = test_df_desc
-        # df = df.sort_values(by='ID')
-        # selected_features = joblib.load(f'{MODEL_DIR}selected_features_{data_type}.joblib')
-        # columns = ['ID', 'SMILES'] + selected_features
-        # print(test_df_desc[columns])
-
-        DATA_TYPES = ['descriptors', 'fingerprints', 'embeddings', 'atomic']
-        test_files = {'descriptors': test_df_desc, 'fingerprints': test_df_fp, 'embeddings': test_df_emb, 'atomic': test_df_atomic}
-        test_dfs = {}
-        for data_type in DATA_TYPES:
-            df = test_files[data_type]
-            df = df.sort_values(by='ID')
-            df = df.dropna()
-            # Load selected features
-            selected_features = joblib.load(f'{MODEL_DIR}/selected_features_{data_type}.joblib')
-            columns = ['ID', 'SMILES'] + selected_features
-            df = df[columns]
-            test_dfs[data_type] = df
-            # print(test_dfs)
-        
-        scaled_dfs = {}
-        for data_type in DATA_TYPES:
-            if data_type == 'descriptors':
-                name = 'Descriptor'
-            elif data_type == 'fingerprints':
-                name = 'Fingerprints'
-            elif data_type == 'embeddings':
-                name = 'Embeddings'
+        descriptor_data = []
+        for smiles in test_df['SMILES']:
+            descriptors = calculate_2dmordred_descriptors(smiles)
+            if descriptors is not None:
+                descriptor_data.append(descriptors)
             else:
-                name = 'Atomic'
-            df = test_dfs[data_type]
-            
-            scaler = joblib.load(f'{MODEL_DIR}/scaler_{name}.joblib')  
-            features = df.drop(columns=['ID', 'SMILES'] )
-            scaled_features = pd.DataFrame(scaler.transform(features), columns=features.columns, index=df.index)
-            scaled_dfs[data_type] = pd.concat([df[['ID', 'SMILES'] ], scaled_features], axis=1)
+                descriptor_data.append([np.nan] * len(calc_mord.descriptors))
         
-        # print(scaled_dfs)
-            models_weak = [
-            lgb.LGBMRegressor(),
-            RandomForestRegressor(),
-            GradientBoostingRegressor(),
-            AdaBoostRegressor(),
-            xgb.XGBRegressor(),
-            ExtraTreesRegressor(),
-            KNeighborsRegressor(),
-            SVR(),
-            MLPRegressor(),
-            DecisionTreeRegressor(),
-        ]
+        raw_names = [desc.__class__.__name__ for desc in calc_mord.descriptors]
+        counts = Counter()
+        deduped_names = []
+        for name in raw_names:
+            if counts[name] == 0:
+                deduped_names.append(name)
+            else:
+                deduped_names.append(f"{name}.{counts[name]}")
+            counts[name] += 1
 
-        models_meta = [
-            SVR()
-        ]
-        n_folds=5
-        meta_features_test = []
-        for data_type, df_test in test_dfs.items():
-            X_eval = df_test.drop(columns=['ID', 'SMILES'])
-            fold_meta_features_test = np.zeros((X_eval.shape[0], len(models_weak)))
-            
-            for i, model_class in tqdm(enumerate(models_weak), desc=f"Predicting with weak models for {data_type}"):
-                test_predictions_folds = []
-                model_name = model_class.__class__.__name__
-                for fold_idx in range(n_folds):
-                    # Load the model
-                    model = joblib.load(f'{MODEL_DIR}/weak_{data_type}_{model_name}_fold_{fold_idx}.joblib')
-                    # Predict
-                    test_predictions_fold = np.clip(model.predict(X_eval), -10, -4.0)
-                    test_predictions_folds.append(test_predictions_fold)
-                fold_meta_features_test[:, i] = np.mean(test_predictions_folds, axis=0)
-            
-            meta_features_test.append(fold_meta_features_test)
-        meta_features_test = np.hstack(meta_features_test)
+        # Convert Mordred results to DataFrame
+        descriptor_df = pd.DataFrame(descriptor_data, columns=deduped_names)
+        test_mordred_2d = pd.concat([test_df[['ID', 'SMILES']], descriptor_df], axis=1)
+        # test_mordred_2d.to_csv('temp/test_2d_mordred.csv', index=False)
+
         
-        for model_class in models_meta:
-            model_name = model_class.__class__.__name__
-            test_predictions_folds = []
-            for fold_idx in range(n_folds):
-                
-                model = joblib.load(f'{MODEL_DIR}/meta_{model_name}_fold_{fold_idx}.joblib')
-               
-                test_predictions_fold = np.clip(model.predict(meta_features_test), -10, -4.0)
-                test_predictions_folds.append(test_predictions_fold)
-          
-            final_predictions = np.mean(test_predictions_folds, axis=0)
+        models_dir = 'models/Caco2' 
+        scaler_path = 'models/Caco2/scaler_caco2.joblib'                          
+        model_base_name = 'LGBMRegressor' 
+        features = joblib.load('models/Caco2/features.joblib')                  
+        n_folds = 5  
+         
+        X_test = test_mordred_2d[features]
+        obj_cols = X_test.select_dtypes(include=['object']).columns
+        if len(obj_cols) > 0:
+            for col in obj_cols:
+                X_test[col] = 0
+
+        
+        scaler = joblib.load(scaler_path)
+        X_new_scaled = scaler.transform(X_test)
+        X_new_scaled = pd.DataFrame(X_new_scaled, columns= X_test.columns,index= X_test.index)
+        all_fold_preds = []
+
+        for fold in range(1, n_folds + 1):
+            fold_model_path = os.path.join(models_dir, f"{model_base_name}_fold{fold}_Caco2.joblib")
+            fold_model = joblib.load(fold_model_path)
+            preds = fold_model.predict(X_new_scaled)
+            preds = np.clip(preds, -10, -3.4)  
+            all_fold_preds.append(preds)
+
+
+        all_fold_preds = np.array(all_fold_preds)
+        final_predictions = np.mean(all_fold_preds, axis=0)
+        # print(final_predictions)
             
         output_df = pd.DataFrame({
-        'SMILES': df_test['SMILES'],
+        'SMILES': test_df['SMILES'],
         'Permeability': final_predictions
         })
         output_file = args.output if args.output else os.path.join(cwd, 'results', 'output_caco2.csv')
@@ -205,12 +174,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-#     # Example test file paths (user should provide these)
-#     test_files = {
-#         'descriptors': 'features/Descriptors/Test_2d_3d_all_descriptors_RRCK.csv',
-#         'fingerprints': 'features/Fingerprints/Test_All_fingerprints_test_RRCK.csv',
-#         'embeddings': 'features/Embeddings/Test_MoLFormer-XL-both-10pct_model_1_fine_tuned_embeddings_RRCK.csv',
-#         'atomic': 'features/Atomic/Test_all_atomic_desc_RRCK.csv'
-#     }
-#     predictions = main(test_files)
-#     print(predictions)

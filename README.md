@@ -5,6 +5,8 @@ PCPpred is a webserver (https://webs.iiitd.edu.in/raghava/pcppred/) and standalo
 - Conversion of peptide sequences from MAP (Modifications and Annotations in Protein) format to SMILES or HELM notation.
 - Permeability prediction for cyclic peptides using SMILES as input across multiple assays: PAMPA, Caco-2, RRCK, and MDCK.
 ---
+# Zenodo
+https://doi.org/10.5281/zenodo.19910197
 # dataset.zip
 Contain all the dataset
 
